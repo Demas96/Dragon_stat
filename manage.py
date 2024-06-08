@@ -2,7 +2,6 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
-from main.telegram_bot import bot
 
 
 def main():
@@ -21,4 +20,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    bot.polling(none_stop=True, interval=0)

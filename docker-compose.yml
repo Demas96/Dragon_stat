@@ -1,0 +1,38 @@
+version: '3'
+
+services:
+  django:
+    container_name: django_bot
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    command: [ "./cmd.sh" ]
+    ports:
+      - "8000:8000"
+    depends_on:
+      pgdb:
+        condition: service_healthy
+    volumes:
+      - .:/dragonstatbot_app
+
+  pgdb:
+    image: postgres:15.3
+    restart: always
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    container_name: pgdb
+    volumes:
+      - pgdbdata:/var/lib/postgresql/data/
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-q", "-d", "${DB_NAME}", "-U", "${DB_USER}" ]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdbdata: null

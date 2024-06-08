@@ -4,8 +4,8 @@ from django.db import models
 
 class APIkeys(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE,)
-    api_key = models.TextField()
-    api_secret = models.TextField()
+    api_key = models.TextField(null=True, blank=True)
+    api_secret = models.TextField(null=True, blank=True)
 
 
 class Balance(models.Model):
@@ -15,4 +15,4 @@ class Balance(models.Model):
 
 class Account(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, )
-    balance = models.ForeignKey(Balance, on_delete=models.CASCADE,)
+    balance = models.ForeignKey(Balance, on_delete=models.CASCADE, null=True, blank=True)
