@@ -2,8 +2,8 @@
 # from pybit.unified_trading import HTTP
 # from telebot import types
 #
-# api_key = 'a3ShoNA9rAEuNWmVDI'
-# api_secret = 'O8pwP6L7kpjsoTkbvnSruRDkNcalfDVmfaDR'
+# api_key = 'a3ShoNA9rAEuNWmVDI' A3zMjyshL0fc8O7pt6
+# api_secret = 'O8pwP6L7kpjsoTkbvnSruRDkNcalfDVmfaDR' 4Yr8EqsGIHeUkM7adKQHw16r9eYJT8vr2EFP
 # BOT_TOKEN = '7430233466:AAEzooJEC_jFbLrxxaOxr5Omx2XALd8LC_Q'
 #
 # bot = telebot.TeleBot(BOT_TOKEN)
@@ -41,6 +41,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 
 from pybit.unified_trading import HTTP
+from pybit.exceptions import InvalidRequestError
 
 from telebot.async_telebot import AsyncTeleBot
 from telebot.async_telebot import types
@@ -62,17 +63,8 @@ class RegisterStates(StatesGroup):
     done = State()
 
 
-@bot.message_handler(commands=['help', 'start'])
-async def send_welcome(message):
-    # markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    msg = 'Привет, я твой Бот помощник для Bybit. Давай зарегистрируемся.'
-    btn1 = types.KeyboardButton('Зарегистрироваться')
-    # markup.add(btn1)
-    await bot.send_message(message.from_user.id, msg)
-
-
 @sync_to_async()
-def get_user(message):
+def create_user(message):
     user = User.objects.get_or_create(id=message.from_user.id, username=message.from_user.username)
     return user[0]
 
@@ -85,32 +77,57 @@ def get_account(user):
 @sync_to_async()
 def create_api_keys(message, key):
     if key == 'api_key':
-        return APIkeys.objects.get_or_create(user_id=message.from_user.id, api_key=message.text)
+        query = APIkeys.objects.get_or_create(user_id=message.from_user.id)
+        query[0].api_key = message.text
+        query[0].save()
+        return query[0]
     elif key == 'api_secret':
         return APIkeys.objects.update(user_id=message.from_user.id, api_secret=message.text)
 
 
 @sync_to_async()
-def get_api_keys(id):
-    return APIkeys.objects.get(user_id=id)
+def get_api_keys(user_id):
+    try:
+        user_keys = APIkeys.objects.get(user_id=user_id)
+    except APIkeys.DoesNotExist:
+        user_keys = False
+    return user_keys
 
 
-@bot.message_handler(commands=['reg'])
-async def get_text_messages(message):
-    # if message.text == 'Зарегистрироваться':
-    user = await get_user(message)
-    account = await get_account(user)
-    msg = 'Введите api_key:'
-    await bot.send_message(message.from_user.id, msg)
-    await bot.set_state(message.from_user.id, RegisterStates.api_key)
+@bot.message_handler(commands=['help', 'start'])
+async def send_welcome(message):
+    user_id = message.from_user.id
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    msg = 'Привет, я твой Бот помощник для Bybit.'
+    print(await bot.get_state(user_id))
+    if await bot.get_state(user_id) is None:
+        if await get_api_keys(user_id):
+            await bot.set_state(user_id, RegisterStates.done)
+    if await bot.get_state(user_id) == str(RegisterStates.done):
+        print('Проверить баланс')
+        btn = types.KeyboardButton('Проверить баланс')
+    else:
+        print('Зарегистрироваться')
+        btn = types.KeyboardButton('Зарегистрироваться')
+    markup.add(btn)
+    await bot.send_message(user_id, msg, reply_markup=markup)
 
 
-# @bot.message_handler(state='*')
-# async def check_reg(message):
-#     print(await get_api_keys(message.from_user.id))
-#     if await get_api_keys(message.from_user.id):
-#         await bot.set_state(message.from_user.id, RegisterStates.done)
-#         print(await bot.get_state(message.from_user.id))
+def check_registration(func):
+    async def wrapper(*args, **kwargs):
+        user_id = args[0].from_user.id
+        if await bot.get_state(user_id) != str(RegisterStates.done):
+            if await get_api_keys(user_id):
+                await bot.set_state(user_id, RegisterStates.done)
+                f = await func(*args, **kwargs)
+                return f
+            else:
+                f = await send_welcome(*args, **kwargs)
+                return f
+        else:
+            f = await func(*args, **kwargs)
+            return f
+    return wrapper
 
 
 @bot.message_handler(state=RegisterStates.api_key)
@@ -124,12 +141,16 @@ async def api_key_step(message):
 @bot.message_handler(state=RegisterStates.api_secret)
 async def api_secret_step(message):
     await create_api_keys(message, 'api_secret')
+    await check_balance(message)
     msg = 'Всё готово'
-    await bot.send_message(message.from_user.id, msg)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn = types.KeyboardButton('Проверить баланс')
+    markup.add(btn)
+    await bot.send_message(message.from_user.id, msg, reply_markup=markup)
     await bot.set_state(message.from_user.id, RegisterStates.done)
 
 
-@bot.message_handler(commands=['check_balance'])
+@check_registration
 async def check_balance(message):
     user_keys = await get_api_keys(message.from_user.id)
     session = HTTP(
@@ -137,18 +158,24 @@ async def check_balance(message):
         api_key=user_keys.api_key,
         api_secret=user_keys.api_secret,
     )
-    r = session.get_wallet_balance(
-        accountType='UNIFIED',
-        coin='USDT',
-    )
-    pnl = round(float(r['result']['list'][0]['coin'][0]['cumRealisedPnl']), 2)
-    totalEquity = round(float(r['result']['list'][0]['totalEquity']), 2)
-    msg = f'Баланс: {totalEquity} USDT, Суммарный P&L: {pnl}, Суммарный P&L%: {round(pnl / totalEquity * 100, 2)}%'
+    try:
+        r = session.get_wallet_balance(
+            accountType='UNIFIED',
+            coin='USDT',
+        )
+        pnl = round(float(r['result']['list'][0]['coin'][0]['cumRealisedPnl']), 2)
+        totalEquity = round(float(r['result']['list'][0]['totalEquity']), 2)
+        msg = f'Баланс: {totalEquity} USDT\nСуммарный P&L: {pnl} USDT\nСуммарный P&L%: {round(pnl / totalEquity * 100, 2)}%'
+    except InvalidRequestError as exc:
+        msg = f'{exc}'
+
     await bot.send_message(message.from_user.id, msg)
 
 
 @bot.message_handler(commands=['get_ordrers'])
+@check_registration
 async def get_orders(message):
+    await check_registration(message)
     user_keys = await get_api_keys(message.from_user.id)
     session = HTTP(
         testnet=False,
@@ -163,7 +190,26 @@ async def get_orders(message):
     msg = json.dumps(r)
     await bot.send_message(message.from_user.id, msg)
 
-# Handle all other messages with content_type 'text' (content_types defaults to ['text'])
-# @bot.message_handler(func=lambda message: True)
-# async def echo_message(message):
-#     await bot.reply_to(message, f'{message.from_user.username} {message.from_user.id}')
+
+@bot.message_handler(content_types=['text'])
+async def get_text_messages(message):
+    if message.text == 'Зарегистрироваться':
+        msg = '- Для начала создайте api ключ, для этого перейдите по ссылке ' \
+              'https://www.bybit.com/app/user/api-management.\n' \
+              '- Нажмите "Создать новый ключ".\n' \
+              '- "API ключи, созданные системой".\n' \
+              '- Название API ключа выберите любое, например "Statistic bot".\n' \
+              '- Разрешения API ключа: Только чтение, Доступ к OpenAPI есть только у IP со специальным разрешением: ' \
+              'используйте ip 213.171.28.9\n' \
+              '- Ниже выберите Единый торговый аккаунт и нажмите Отправить.\n' \
+              '- Дальше отправьте в этот чат созданные ключи.'
+        await bot.send_message(message.from_user.id, msg, reply_markup=types.ReplyKeyboardRemove())
+        user = await create_user(message)
+        account = await get_account(user)
+        msg = 'Введите api_key:'
+        await bot.send_message(message.from_user.id, msg)
+        await bot.set_state(message.from_user.id, RegisterStates.api_key)
+    if message.text == 'Проверить баланс':
+        await check_balance(message)
+
+
