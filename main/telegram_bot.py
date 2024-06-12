@@ -47,7 +47,8 @@ def create_api_keys(message, key):
         query[0].save()
         return query[0]
     elif key == 'api_secret':
-        return APIkeys.objects.update(user_id=message.from_user.id, api_secret=message.text)
+        query = APIkeys.objects.filter(user_id=message.from_user.id).update(api_secret=message.text)
+        return query
 
 
 @sync_to_async()
