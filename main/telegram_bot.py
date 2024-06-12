@@ -29,7 +29,8 @@ class RegisterStates(StatesGroup):
 
 @sync_to_async()
 def create_user(message):
-    user = User.objects.get_or_create(id=message.from_user.id, username=message.from_user.username)
+    username = message.from_user.username if message.from_user.username else 'None'
+    user = User.objects.get_or_create(id=message.from_user.id, username=username)
     return user[0]
 
 
